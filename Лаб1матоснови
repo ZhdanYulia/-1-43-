@@ -1,0 +1,130 @@
+"""
+Лабораторна робота №1 — «Наближення функції тригонометричним рядом Фур'є»
+Варіант n = 8 (парний): f(x) = x^n * exp(-x^2 / n) на [-pi, pi]
+"""
+import time
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from scipy.integrate import quad, trapezoid
+
+n = 8
+A, B = -np.pi, np.pi           # інтервал розкладу
+L = (B - A) / 2                # півперіод (= pi)
+
+
+# 1. Точне аналітичне обчислення значення функції
+def f(x):
+    return x ** n * np.exp(-x ** 2 / n)
+
+
+# 2. Коефіцієнти ряду Фур'є a_k (k = 0,1,2,...) та b_k (k = 1,2,3,...)
+def a_coef(k):
+    val, _ = quad(lambda x: f(x) * np.cos(k * np.pi * x / L), A, B, limit=200)
+    return val / L
+
+
+def b_coef(k):
+    val, _ = quad(lambda x: f(x) * np.sin(k * np.pi * x / L), A, B, limit=200)
+    return val / L
+
+
+def coefficients(N):
+    a = np.array([a_coef(k) for k in range(N + 1)])
+    b = np.array([0.0] + [b_coef(k) for k in range(1, N + 1)])
+    return a, b
+
+
+# 3. Наближення рядом Фур'є порядку N
+def fourier_approx(x, N, a=None, b=None):
+    if a is None:
+        a, b = coefficients(N)
+    s = np.full_like(np.asarray(x, dtype=float), a[0] / 2)
+    for k in range(1, N + 1):
+        s += a[k] * np.cos(k * np.pi * x / L) + b[k] * np.sin(k * np.pi * x / L)
+    return s
+
+
+# 4. Графіки гармонік (k = 0..N, N = 10) та спектру a_k, b_k
+def plot_harmonics(a, b, N=10, fname="harmonics.png"):
+    x = np.linspace(A, B, 1000)
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(x, np.full_like(x, a[0] / 2), label="k=0")
+    for k in range(1, N + 1):
+        ax.plot(x, a[k] * np.cos(k * x) + b[k] * np.sin(k * x), label=f"k={k}", lw=1)
+    ax.set_title("Гармоніки ряду Фур'є, k = 0..10")
+    ax.set_xlabel("x"); ax.grid(alpha=.3); ax.legend(ncol=4, fontsize=8)
+    fig.tight_layout(); fig.savefig(fname, dpi=150); plt.close(fig)
+
+
+def plot_spectrum(a, b, N=10, fname="spectrum.png"):
+    k = np.arange(N + 1)
+    fig, axs = plt.subplots(1, 2, figsize=(10, 4))
+    axs[0].stem(k, a[:N + 1]); axs[0].set_title("a(k)"); axs[0].set_xlabel("k")
+    axs[1].stem(k, b[:N + 1]); axs[1].set_title("b(k)"); axs[1].set_xlabel("k")
+    axs[1].set_ylim(-1, 1)
+    for ax in axs: ax.grid(alpha=.3)
+    fig.suptitle("Частотна область: коефіцієнти Фур'є")
+    fig.tight_layout(); fig.savefig(fname, dpi=150); plt.close(fig)
+
+
+def plot_approx(a, b, orders=(1, 3, 5, 10), fname="approx.png"):
+    x = np.linspace(A, B, 1000)
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(x, f(x), "k", lw=2.5, label="f(x)")
+    for N in orders:
+        ax.plot(x, fourier_approx(x, N, a, b), "--", label=f"N={N}")
+    ax.set_title(r"$f(x)=x^8 e^{-x^2/8}$ та її наближення рядом Фур'є")
+    ax.set_xlabel("x"); ax.grid(alpha=.3); ax.legend()
+    fig.tight_layout(); fig.savefig(fname, dpi=150); plt.close(fig)
+
+
+# 5. Відносна похибка наближення
+def relative_error(N, a, b, m=4001):
+    x = np.linspace(A, B, m)
+    fx, sx = f(x), fourier_approx(x, N, a, b)
+    e2 = np.sqrt(trapezoid((fx - sx) ** 2, x) / trapezoid(fx ** 2, x))
+    emax = np.max(np.abs(fx - sx)) / np.max(np.abs(fx))
+    return e2, emax
+
+
+# 6. Збереження результатів у файл
+def save_results(N, a, b, errs, fname="results.txt"):
+    with open(fname, "w", encoding="utf-8") as fh:
+        fh.write(f"Варіант n = {n};  f(x) = x^{n} * exp(-x^2/{n}),  x in [-pi, pi]\n")
+        fh.write(f"Порядок N = {N}\n\n")
+        fh.write(" k            a_k                 b_k\n")
+        for k in range(N + 1):
+            fh.write(f"{k:2d}  {a[k]:20.10f}  {b[k]:18.3e}\n")
+        fh.write("\nВідносна похибка (L2 / max) для різних N:\n")
+        for NN, (e2, em) in errs.items():
+            fh.write(f"N = {NN:3d}:  dL2 = {e2:.6e}   dmax = {em:.6e}\n")
+
+
+# 7. Головна програма
+def main():
+    N = 10
+    t0 = time.perf_counter()
+    a, b = coefficients(50)          # запас коефіцієнтів для дослідження похибки
+    t1 = time.perf_counter()
+    errs = {NN: relative_error(NN, a, b) for NN in (1, 2, 3, 5, 10, 20, 50)}
+    print(f"Обчислення 51 пари коефіцієнтів: {t1 - t0:.3f} c")
+    for k in range(N + 1):
+        print(f"a_{k} = {a[k]: .6f}   b_{k} = {b[k]: .2e}")
+    for NN, (e2, em) in errs.items():
+        print(f"N={NN:3d}  rel L2 = {e2:.4e}  rel max = {em:.4e}")
+    plot_harmonics(a, b, N); plot_spectrum(a, b, N); plot_approx(a, b)
+    save_results(N, a, b, errs)
+    # графік похибки від N
+    Ns = np.arange(1, 51)
+    e = [relative_error(NN, a, b)[0] for NN in Ns]
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.semilogy(Ns, e, "o-", ms=3); ax.grid(alpha=.3, which="both")
+    ax.set_xlabel("N"); ax.set_ylabel("відносна похибка (L2)")
+    ax.set_title("Залежність похибки наближення від порядку N")
+    fig.tight_layout(); fig.savefig("error.png", dpi=150); plt.close(fig)
+
+
+if __name__ == "__main__":
+    main()
