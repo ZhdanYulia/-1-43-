@@ -1,1 +1,166 @@
+"""
+Лабораторна робота №2 — «Дискретне перетворення Фур'є»
+Варіант n = 8:  Частина I: N = 10 + n = 18;  Частина II: N = 96 + n = 104
+"""
+import time, math, cmath
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
+n_var = 8
+
+
+class OpCounter:
+    """Лічильник дійсних арифметичних операцій."""
+    def __init__(self):
+        self.mul = 0; self.add = 0; self.trig = 0
+    def reset(self):
+        self.mul = self.add = self.trig = 0
+
+
+ops = OpCounter()
+
+
+# ---------------- Частина I ----------------
+# 1. Один (n-й) член ряду для k-го коефіцієнта у тригонометричній формі:
+#    f_n * cos(2*pi*k*n/N) - j * f_n * sin(2*pi*k*n/N)
+def dft_term(f_n, k, n, N):
+    phi = 2 * math.pi * k * n / N          # 3 множення + 1 ділення (рахуємо як 4 mul)
+    c, s = math.cos(phi), math.sin(phi)    # 2 тригонометричні функції
+    ops.mul += 4 + 2; ops.trig += 2        # + f_n*cos, f_n*sin
+    return f_n * c, -f_n * s               # (дійсна, уявна) частини члена
+
+
+# 2. Коефіцієнт C_k = A_k + j B_k як сума N членів (з нормуванням 1/N)
+def dft_coef(f, k):
+    N = len(f)
+    A = B = 0.0
+    for n in range(N):
+        re, im = dft_term(f[n], k, n, N)
+        A += re; B += im
+        ops.add += 2
+    ops.mul += 2                            # A/N, B/N
+    return A / N, B / N
+
+
+# 4. ДПФ довільного вхідного вектора
+def dft(f):
+    N = len(f)
+    C = np.zeros(N, dtype=complex)
+    for k in range(N):
+        A, B = dft_coef(f, k)
+        C[k] = A + 1j * B
+    return C
+
+
+def amp_phase(C):
+    return np.abs(C), np.angle(C)
+
+
+# 3. Графік спектру амплітуд і фаз
+def plot_spectrum(C, title, fname):
+    amp, ph = amp_phase(C)
+    k = np.arange(len(C))
+    fig, axs = plt.subplots(1, 2, figsize=(11, 4))
+    axs[0].stem(k, amp); axs[0].set_title("Спектр амплітуд |C_k|")
+    axs[1].stem(k, ph); axs[1].set_title("Спектр фаз arg C_k, рад")
+    for ax in axs: ax.set_xlabel("k"); ax.grid(alpha=.3)
+    fig.suptitle(title); fig.tight_layout(); fig.savefig(fname, dpi=150); plt.close(fig)
+
+
+def part1():
+    N = 10 + n_var
+    rng = np.random.default_rng(2024)
+    f = np.round(rng.uniform(-5, 5, N), 3)        # довільний вхідний вектор
+    ops.reset()
+    t0 = time.perf_counter()
+    C = dft(f)
+    dt = time.perf_counter() - t0
+    err = np.max(np.abs(C - np.fft.fft(f) / N))
+    plot_spectrum(C, f"ДПФ випадкового сигналу, N = {N}", "p1_spectrum.png")
+    fig, ax = plt.subplots(figsize=(8, 3.2))
+    ax.stem(np.arange(N), f); ax.set_title(f"Вхідний вектор f_n, N = {N}")
+    ax.set_xlabel("n"); ax.grid(alpha=.3); fig.tight_layout()
+    fig.savefig("p1_signal.png", dpi=150); plt.close(fig)
+    np.savetxt("p1_input.txt", f, fmt="%.3f")
+    return dict(N=N, f=f, C=C, time=dt, mul=ops.mul, add=ops.add, trig=ops.trig, err=err)
+
+
+# ---------------- Частина II ----------------
+def part2():
+    Nnum = 96 + n_var                               # 104
+    b7 = format(Nnum, "b")                          # '1101000' (7 розрядів)
+    bit8 = "1" if n_var % 2 else "0"                # парний варіант -> 0
+    bits = bit8 + b7                                # 8-й (старший) розряд
+    s = np.array([int(c) for c in bits], dtype=float)
+    ops.reset()
+    C = dft(s)
+    amp, ph = amp_phase(C)
+    plot_spectrum(C, "ДПФ відліків s(nT_δ), N = 8", "p2_spectrum.png")
+
+    # Відтворений аналоговий сигнал (період T = 1):
+    # s(t) = C0 + 2*sum_{m=1}^{3} |C_m| cos(2*pi*m*t/T + arg C_m) + C4 cos(8*pi*t/T)
+    T = 1.0
+    def s_t(t):
+        r = np.full_like(t, C[0].real)
+        for m in range(1, 4):
+            r += 2 * amp[m] * np.cos(2 * np.pi * m * t / T + ph[m])
+        r += C[4].real * np.cos(2 * np.pi * 4 * t / T)
+        return r
+    t = np.linspace(0, 2 * T, 2000)
+    tn = np.arange(16) * T / 8
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.plot(t, s_t(t), label="відтворений s(t)")
+    ax.stem(tn, np.tile(s, 2), linefmt="C3-", markerfmt="C3o", basefmt=" ",
+            label="відліки s(nT_δ)")
+    ax.set_xlabel("t / T"); ax.grid(alpha=.3); ax.legend()
+    ax.set_title("Відтворення аналогового сигналу за 8 відліками (2 періоди)")
+    fig.tight_layout(); fig.savefig("p2_signal.png", dpi=150); plt.close(fig)
+    check = np.max(np.abs(s_t(np.arange(8) / 8) - s))
+    expr = (f"s(t) = {C[0].real:.4f}"
+            + "".join(f" + {2*amp[m]:.4f}*cos({2*m}*pi*t/T {ph[m]:+.4f})" for m in range(1, 4))
+            + f" + {C[4].real:.4f}*cos(8*pi*t/T)")
+    return dict(expr=expr, Nnum=Nnum, b7=b7, bits=bits, s=s, C=C, amp=amp, ph=ph, check=check)
+
+
+# ---------------- Частина III ----------------
+def idft(C):
+    N = len(C)
+    out = np.zeros(N, dtype=complex)
+    for n in range(N):
+        out[n] = sum(C[k] * cmath.exp(2j * math.pi * k * n / N) for k in range(N))
+    return out
+
+
+def part3(C):
+    s_rec = idft(C)
+    # 2. Аналітичні вирази відліків при n = 0, 1
+    for n in (0, 1):
+        terms = [C[k] * cmath.exp(2j * math.pi * k * n / 8) for k in range(8)]
+        print(f"  s({n}*T_d) = sum_k C_k*exp(j*2*pi*k*{n}/8) = "
+              + " + ".join(f"({t.real:.4f}{t.imag:+.4f}j)" for t in terms)
+              + f" = {sum(terms).real:.4f}")
+    return s_rec
+
+
+def main():
+    r1 = part1()
+    print(f"Частина I: N={r1['N']}, час={r1['time']*1e3:.3f} мс, mul={r1['mul']}, "
+          f"add={r1['add']}, trig={r1['trig']}, max|C-numpy|={r1['err']:.2e}")
+    for k, c in enumerate(r1["C"]):
+        print(f"  C_{k:2d} = {c.real: .5f} {c.imag:+.5f}j  |C|={abs(c):.5f}  arg={np.angle(c): .5f}")
+    r2 = part2()
+    print(f"\nЧастина II: {r2['Nnum']} = {r2['b7']}_2 -> {r2['bits']} ; s = {r2['s']}")
+    for k, c in enumerate(r2["C"]):
+        print(f"  C_{k} = {c.real: .6f} {c.imag:+.6f}j  |C|={r2['amp'][k]:.6f}  arg={r2['ph'][k]: .6f}")
+    print("  " + r2["expr"])
+    print("  перевірка s(t) у вузлах:", r2["check"])
+    print("\nЧастина III: аналітичні вирази")
+    s_rec = part3(r2["C"])
+    print("Частина III: ОДПФ:", np.round(s_rec.real, 10), " max|Im|=", np.max(np.abs(s_rec.imag)))
+    return r1, r2, s_rec
+
+
+if __name__ == "__main__":
+    main()
